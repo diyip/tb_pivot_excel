@@ -184,40 +184,7 @@ No Docker rebuild needed — `projects/` is a mounted volume.
 
 #### Step 2 — Configure the tenant
 
-**`config/secrets.json`** — add the new ThingsBoard instance credentials:
-
-```json
-{
-  "tenants": {
-    "your_tenant_id": {
-      "display_name": "My ThingsBoard",
-      "thingsboard": {
-        "url":      "https://your-tb.example.com",
-        "username": "admin@example.com",
-        "password": "your-password"
-      }
-    }
-  }
-}
-```
-
-**`config/settings.json`** — add non-sensitive settings for the same `tenant_id`:
-
-```json
-{
-  "tenants": {
-    "your_tenant_id": {
-      "name":    "My ThingsBoard Instance",
-      "enabled": true,
-      "thingsboard": {
-        "url": "https://your-tb.example.com"
-      }
-    }
-  }
-}
-```
-
-The `tenant_id` key must match exactly what the widget sends in its payload.
+See the [Config file format](#config-file-format) section below for the full `secrets.json` and `settings.json` reference. Add an entry for the new tenant in both files, then restart the container — no Docker rebuild needed.
 
 #### Step 3 — Register the route in Flask (if not already present)
 
@@ -516,6 +483,137 @@ Backend limits (hard caps regardless of payload):
 | Max entities | 500 |
 | Max keys | 100 |
 | Max points per key per entity | 10,000 |
+
+---
+
+## Config file format
+
+Both files live in `tb-automation/config/` and are mounted into the Docker container as read-only volumes. **Never commit these files to git.**
+
+---
+
+### secrets.json
+
+Holds ThingsBoard credentials and any other sensitive values. This is the primary source for tenant lookup.
+
+```json
+{
+  "tenants": {
+    "friendly_tenant_id": {
+      "display_name": "My ThingsBoard Instance",
+      "api_key": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "thingsboard": {
+        "url":      "https://your-tb.example.com",
+        "username": "admin@example.com",
+        "password": "••••••••••••"
+      }
+    },
+    "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx": {
+      "display_name": "My ThingsBoard Instance",
+      "thingsboard": {
+        "url":      "https://your-tb.example.com",
+        "username": "admin@example.com",
+        "password": "••••••••••••"
+      }
+    }
+  },
+  "external_services": {
+    "smtp": {
+      "host":     "smtp.example.com",
+      "port":     587,
+      "username": "sender@example.com",
+      "password": "••••••••••••"
+    }
+  }
+}
+```
+
+#### Field reference
+
+| Field | Required | Description |
+|---|---|---|
+| `tenants` | yes | Map of `tenant_id` → tenant config |
+| `tenant_id` | yes | Either a UUID (ThingsBoard tenant UUID) or a friendly string name — must match what the widget sends in `payload.tenant_id` |
+| `display_name` | yes | Human-readable name — used to name the output subfolder under `outputs/` |
+| `api_key` | no | API key for tb-automation's own `require_auth` middleware (used by `/api/projects/*` routes) |
+| `thingsboard.url` | see note | ThingsBoard instance URL. Required unless a global fallback is set in `settings.json` |
+| `thingsboard.username` | yes | ThingsBoard login — typically the admin email address |
+| `thingsboard.password` | yes | ThingsBoard login password |
+| `external_services.smtp` | no | SMTP config for email features (not used by tb_pivot_excel) |
+
+#### Two styles of tenant_id
+
+You can register a tenant under a **UUID** (the ThingsBoard tenant UUID), a **friendly string name**, or both pointing to the same instance:
+
+```json
+{
+  "tenants": {
+    "my_production": {
+      "display_name": "My Production TB",
+      "thingsboard": {
+        "username": "admin@example.com",
+        "password": "••••••••••••"
+      }
+    },
+    "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx": {
+      "display_name": "My Production TB",
+      "thingsboard": {
+        "url":      "https://your-tb.example.com",
+        "username": "admin@example.com",
+        "password": "••••••••••••"
+      }
+    }
+  }
+}
+```
+
+#### ThingsBoard URL resolution
+
+The backend resolves the TB URL with this priority:
+
+1. `secrets.json` → `tenants.<tenant_id>.thingsboard.url`
+2. Fallback: `settings.json` → `global.thingsboard.url`
+
+If a friendly-name key has no `url`, it uses the global fallback. UUID keys should always include `url` explicitly.
+
+#### JWT token caching
+
+The backend logs in to ThingsBoard once and caches the JWT token at `.cache/tb_token_<tenant_id>.json`. It refreshes automatically when the token expires. If you ever get auth errors, delete the cache file and retry.
+
+---
+
+### settings.json
+
+Holds non-sensitive settings. Merged on top of `secrets.json` — only the fields listed here override the corresponding secret entry.
+
+```json
+{
+  "tenants": {
+    "friendly_tenant_id": {
+      "name":    "My ThingsBoard Instance",
+      "enabled": true,
+      "thingsboard": {
+        "url": "https://your-tb.example.com"
+      }
+    }
+  },
+  "global": {
+    "default_timezone": "Asia/Bangkok",
+    "max_file_size_mb": 50,
+    "thingsboard": {
+      "url": "https://fallback-tb.example.com"
+    }
+  }
+}
+```
+
+| Field | Description |
+|---|---|
+| `tenants.<id>.name` | Display name (non-sensitive copy of `display_name`) |
+| `tenants.<id>.enabled` | Set to `false` to disable a tenant without removing its credentials |
+| `tenants.<id>.thingsboard.url` | Can set URL here instead of in secrets if preferred |
+| `global.default_timezone` | Fallback timezone when not specified in payload |
+| `global.thingsboard.url` | Fallback TB URL for tenants that omit it in `secrets.json` |
 
 ---
 
