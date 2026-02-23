@@ -377,9 +377,87 @@ Available date range options: `last_24_hours`, `last_7_days`, `last_30_days`, `l
 
 ---
 
+## Report config: how defaults and overrides work
+
+### The three-layer config system
+
+Every report run resolves its final config from three layers, applied in order:
+
+```
+Layer 1 — settings.py (DEFAULT_REPORT_CONFIG)
+    ↓  merged with
+Layer 2 — widget UI settings (filename, aggDefault, weekStart, etc.)
+    ↓  merged with
+Layer 3 — payload.reportConfig (manual JSON override in widget settings)
+    ↓
+Final effective config used to build the Excel file
+```
+
+### settings.py — where defaults live
+
+Each version folder has its own `settings.py` that defines `DEFAULT_REPORT_CONFIG`. This is the baseline — every key that the report uses has a value here, so the report always works even with an empty payload.
+
+```
+tb_pivot_excel/
+├── settings.py      ← used by top-level main.py (legacy entry point)
+└── v1/
+    └── settings.py  ← used by v1/main.py  ← this is the active one
+```
+
+When you create v2, you add `v2/settings.py` with its own `DEFAULT_REPORT_CONFIG`. This lets v2 have different defaults (different sheet names, different number format, etc.) without affecting v1.
+
+**To change a default for all users without them touching the widget** — edit `settings.py` and restart the container. No Docker rebuild needed since `projects/` is a volume.
+
+### How reportConfig merges with defaults
+
+The `resolve_config()` function in `settings.py` merges the payload's `reportConfig` on top of `DEFAULT_REPORT_CONFIG`. The merge behaviour differs by section:
+
+| Section | Merge behaviour |
+|---|---|
+| `filename`, `filename_timestamp` | Simple replace — payload value wins |
+| `formatting` | Shallow merge — only the keys you provide override; rest keep defaults |
+| `agg_map` | Shallow merge — you can override specific keys, `default` key is kept unless overridden |
+| `sheets` | Shallow merge — override `week_start` without touching `partial_period`, or vice versa |
+| `column_map` | **Full replace** — if you provide `column_map`, it replaces the entire default; column order matters |
+
+Special cases:
+- **Omit a section entirely** → the full default for that section is used
+- **Pass `{}` for a section** → that section becomes empty (disables all defaults for it)
+
+### Example: only override what you need
+
+This only changes the week start day — everything else (sheet names, number format, column widths, etc.) stays at the `settings.py` defaults:
+
+```json
+{
+  "sheets": { "week_start": "Monday" }
+}
+```
+
+This overrides just one formatting key — the rest of `formatting` stays intact:
+
+```json
+{
+  "formatting": { "number_format": "#,##0.000" }
+}
+```
+
+This replaces the entire column map — order controls column order in Excel:
+
+```json
+{
+  "column_map": {
+    "AssetA temperature": ["Zone A", "Temperature"],
+    "AssetB temperature": ["Zone B", "Temperature"]
+  }
+}
+```
+
+---
+
 ## Advanced: reportConfig override
 
-Leave `reportConfig` empty to use the widget settings above. To override specific behaviour, paste a JSON object — only the keys you include are applied; everything else falls back to defaults.
+Leave `reportConfig` empty to use the widget settings above. To override specific behaviour, paste a JSON object — only the keys you include are applied; everything else falls back to the `settings.py` defaults.
 
 ### Column labels (column_map)
 
