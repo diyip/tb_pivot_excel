@@ -659,10 +659,13 @@ Holds non-sensitive settings. Merged on top of `secrets.json` — only the field
 
 ## Currently deployed on
 
-| Instance | URL |
-|---|---|
-| LH Smart Home | smarthome.lh.co.th |
-| YIP TB PE | tbpe.yipintsoi.net |
+| Instance | URL | `tenant_id` in widget payload |
+|---|---|---|
+| LH Production Environment | https://smarthome.lh.co.th | `lh_production_environment` |
+| LH Production Environment | https://smarthome.lh.co.th | `73b0d500-d265-11ea-ab22-49d6e5135835` |
+| YIP Production Environment | https://tbpe.yipintsoi.net | `0a85b420-8d87-11ee-a473-27ffec2887b9` |
+
+> LH has two `tenant_id` entries pointing to the same instance — a friendly name (`lh_production_environment`) and the ThingsBoard UUID. Both work. The friendly name uses the global fallback URL from `settings.json`; the UUID has the URL set explicitly in `secrets.json`.
 
 ---
 
