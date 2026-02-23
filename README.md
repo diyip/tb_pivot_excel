@@ -169,21 +169,7 @@ Tenants are configured in two files under `config/`:
 - **`secrets.json`** — ThingsBoard URL and login credentials (keep this file secret)
 - **`settings.json`** — Non-sensitive settings like `display_name`, enabled projects, rate limits
 
-The `tenant_id` in the widget payload is the key used to look up both files. Example `settings.json` structure:
-
-```json
-{
-  "tenants": {
-    "your_tenant_id": {
-      "name": "My ThingsBoard Instance",
-      "enabled": true,
-      "thingsboard": {
-        "url": "https://your-tb.example.com"
-      }
-    }
-  }
-}
-```
+The `tenant_id` in the widget payload (always a UUID in production) is the key used to look up both files. The URL must be set in `secrets.json` per tenant — do not put it in `settings.json` at the tenant level as that is not read by the URL resolver.
 
 ---
 
@@ -692,20 +678,15 @@ Holds ThingsBoard credentials and any other sensitive values. This is the primar
 | `thingsboard.password` | yes | ThingsBoard login password |
 | `external_services.smtp` | no | SMTP config for email features (not used by tb_pivot_excel) |
 
-#### Two styles of tenant_id
+#### tenant_id — UUID vs friendly name
 
-You can register a tenant under a **UUID** (the ThingsBoard tenant UUID), a **friendly string name**, or both pointing to the same instance:
+In production, the widget reads `ctx.currentUser.tenantId` from ThingsBoard and sends it as the `tenant_id` in the payload. This is always a **UUID**. Register the tenant under that UUID in `secrets.json` with an explicit `url`.
+
+A **friendly string name** (e.g. `lh_production_environment`) is only used as the hardcoded default fallback in the Flask route and `run.sh` for when no `tenant_id` arrives in the payload. A friendly-name entry typically has no `url` and relies on the `global.thingsboard.url` fallback in `settings.json`.
 
 ```json
 {
   "tenants": {
-    "my_production": {
-      "display_name": "My Production TB",
-      "thingsboard": {
-        "username": "admin@example.com",
-        "password": "••••••••••••"
-      }
-    },
     "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx": {
       "display_name": "My Production TB",
       "thingsboard": {
@@ -720,12 +701,12 @@ You can register a tenant under a **UUID** (the ThingsBoard tenant UUID), a **fr
 
 #### ThingsBoard URL resolution
 
-The backend resolves the TB URL with this priority:
+`tb_auth.py` resolves the TB URL from exactly two places, in this order:
 
 1. `secrets.json` → `tenants.<tenant_id>.thingsboard.url`
 2. Fallback: `settings.json` → `global.thingsboard.url`
 
-If a friendly-name key has no `url`, it uses the global fallback. UUID keys should always include `url` explicitly.
+> **Note:** `settings.json` at the tenant level (`tenants.<id>.thingsboard.url`) is merged into the general config by `config.py` but is **not** read by `tb_auth.py` for URL resolution. Always set the URL in `secrets.json` per tenant, or use the `global` fallback in `settings.json`.
 
 #### JWT token caching
 
@@ -740,12 +721,9 @@ Holds non-sensitive settings. Merged on top of `secrets.json` — only the field
 ```json
 {
   "tenants": {
-    "friendly_tenant_id": {
+    "your_tenant_id": {
       "name":    "My ThingsBoard Instance",
-      "enabled": true,
-      "thingsboard": {
-        "url": "https://your-tb.example.com"
-      }
+      "enabled": true
     }
   },
   "global": {
@@ -762,9 +740,8 @@ Holds non-sensitive settings. Merged on top of `secrets.json` — only the field
 |---|---|
 | `tenants.<id>.name` | Display name (non-sensitive copy of `display_name`) |
 | `tenants.<id>.enabled` | Set to `false` to disable a tenant without removing its credentials |
-| `tenants.<id>.thingsboard.url` | Can set URL here instead of in secrets if preferred |
 | `global.default_timezone` | Fallback timezone when not specified in payload |
-| `global.thingsboard.url` | Fallback TB URL for tenants that omit it in `secrets.json` |
+| `global.thingsboard.url` | Fallback TB URL — used when `secrets.json` has no `url` for that tenant (e.g. the `lh_production_environment` legacy key) |
 
 ---
 
