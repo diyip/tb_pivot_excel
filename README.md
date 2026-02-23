@@ -64,7 +64,9 @@ def pivot_excel_v1():
     if request.method == "OPTIONS":
         return "", 204
     payload   = request.get_json(silent=True) or {}
-    tenant_id = payload.get("tenant_id", "lh_production_environment")
+    tenant_id = payload.get("tenant_id")
+    if not tenant_id:
+        return jsonify({"error": "Missing tenant_id in payload"}), 400
     from projects.tb_pivot_excel.v1.main import generate_pivot_excel_file
     out_path = generate_pivot_excel_file(payload, tenant_id)
     return send_file(out_path, as_attachment=True, ...)
@@ -317,7 +319,9 @@ def pivot_excel_v2():
     if request.method == "OPTIONS":
         return "", 204
     payload   = request.get_json(silent=True) or {}
-    tenant_id = payload.get("tenant_id", "lh_production_environment")
+    tenant_id = payload.get("tenant_id")
+    if not tenant_id:
+        return jsonify({"error": "Missing tenant_id in payload"}), 400
     from projects.tb_pivot_excel.v2.main import generate_pivot_excel_file
     out_path = generate_pivot_excel_file(payload, tenant_id)
     return send_file(
@@ -678,11 +682,9 @@ Holds ThingsBoard credentials and any other sensitive values. This is the primar
 | `thingsboard.password` | yes | ThingsBoard login password |
 | `external_services.smtp` | no | SMTP config for email features (not used by tb_pivot_excel) |
 
-#### tenant_id — UUID vs friendly name
+#### tenant_id — always use UUID
 
-In production, the widget reads `ctx.currentUser.tenantId` from ThingsBoard and sends it as the `tenant_id` in the payload. This is always a **UUID**. Register the tenant under that UUID in `secrets.json` with an explicit `url`.
-
-A **friendly string name** (e.g. `lh_production_environment`) is only used as the hardcoded default fallback in the Flask route and `run.sh` for when no `tenant_id` arrives in the payload. A friendly-name entry typically has no `url` and relies on the `global.thingsboard.url` fallback in `settings.json`.
+The widget reads `ctx.currentUser.tenantId` from ThingsBoard and sends it as `tenant_id` in the payload. This is always a **UUID**. Register each tenant under that UUID in `secrets.json` with an explicit `url`. The Flask route now returns a 400 error if `tenant_id` is missing.
 
 ```json
 {
@@ -741,7 +743,7 @@ Holds non-sensitive settings. Merged on top of `secrets.json` — only the field
 | `tenants.<id>.name` | Display name (non-sensitive copy of `display_name`) |
 | `tenants.<id>.enabled` | Set to `false` to disable a tenant without removing its credentials |
 | `global.default_timezone` | Fallback timezone when not specified in payload |
-| `global.thingsboard.url` | Fallback TB URL — used when `secrets.json` has no `url` for that tenant (e.g. the `lh_production_environment` legacy key) |
+| `global.thingsboard.url` | Fallback TB URL — used when a tenant entry in `secrets.json` has no `url` |
 
 ---
 
@@ -749,11 +751,8 @@ Holds non-sensitive settings. Merged on top of `secrets.json` — only the field
 
 | Instance | URL | `tenant_id` in widget payload |
 |---|---|---|
-| LH Production Environment | https://smarthome.lh.co.th | `lh_production_environment` |
 | LH Production Environment | https://smarthome.lh.co.th | `73b0d500-d265-11ea-ab22-49d6e5135835` |
 | YIP Production Environment | https://tbpe.yipintsoi.net | `0a85b420-8d87-11ee-a473-27ffec2887b9` |
-
-> LH has two `tenant_id` entries pointing to the same instance — a friendly name (`lh_production_environment`) and the ThingsBoard UUID. Both work. The friendly name uses the global fallback URL from `settings.json`; the UUID has the URL set explicitly in `secrets.json`.
 
 ---
 

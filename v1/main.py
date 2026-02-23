@@ -602,7 +602,9 @@ def main():
                 break
     if not payload_path or not os.path.exists(payload_path):
         raise SystemExit("ERROR: No payload JSON found.")
-    tenant_id = os.sys.argv[2] if len(os.sys.argv) >= 3 else "lh_production_environment"
+    if len(os.sys.argv) < 3:
+        raise SystemExit("ERROR: tenant_id required. Usage: main.py <payload.json> <tenant_id>")
+    tenant_id = os.sys.argv[2]
     payload   = _read_json(payload_path)
     out       = generate_pivot_excel_file(payload, tenant_id)
     print("output:", out)
