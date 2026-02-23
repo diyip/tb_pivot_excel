@@ -125,7 +125,7 @@ tb_pivot_excel/                           ← this repo (lives in tb-automation/
     ├── main.py                           ← core logic: fetch TB telemetry → pivot → export .xlsx
     ├── settings.py                       ← DEFAULT_REPORT_CONFIG (all defaults) + resolve_config()
     ├── __init__.py                       ← makes v1/ a Python package
-    ├── run.sh                            ← local test runner: ./run.sh [payload.json] [tenant_id]
+    ├── run.sh                            ← local test runner: ./run.sh [payload.json] <tenant_id>  (tenant_id required)
     ├── test_resample.py                  ← unit test for the Daily/Weekly/Monthly/Yearly resampling logic
     ├── test_widget_payload.json          ← sample payload for v1 local testing
     └── widget/                           ← ThingsBoard custom widget files (paste into TB widget editor)
@@ -235,10 +235,10 @@ Use `run.sh` to verify the backend works before wiring up the widget:
 ```bash
 # From tb-automation root
 cd projects/tb_pivot_excel/v1
-./run.sh test_widget_payload.json <your_tenant_id>
+./run.sh test_widget_payload.json <tenant_id>
 ```
 
-Edit `test_widget_payload.json` to use a real entity ID and `tenant_id` from your new instance. A successful run prints `output: outputs/<tenant>/<filename>.xlsx`.
+`tenant_id` is required — the script exits with a usage error if omitted. Edit `test_widget_payload.json` to use real entity IDs from your new instance. A successful run prints `output: outputs/<tenant>/<filename>.xlsx`.
 
 ---
 
