@@ -750,27 +750,32 @@ Holds non-sensitive settings. Merged on top of `secrets.json` — only the field
 ## Project structure
 
 ```
-tb_pivot_excel/                       ← this repo (lives in tb-automation/projects/)
-├── v1/
-│   ├── main.py                       # Core logic — fetch, pivot, export
-│   ├── settings.py                   # Default config and backend limits
-│   ├── run.sh                        # Local test runner
-│   ├── test_widget_payload.json      # Sample payload for local testing
-│   └── widget/
-│       ├── widget.html               # ThingsBoard widget HTML
-│       ├── widget.js                 # ThingsBoard widget JavaScript  (POSTs to /api/pivot-excel/v1)
-│       ├── schema.json               # ThingsBoard widget settings schema
-│       └── INSTRUCTIONS.md          # Widget installation notes
-├── test_widget_payloads/             # Additional sample payloads
-├── settings.py                       # Top-level settings (mirrors v1)
-├── main.py                           # Top-level entry point
-└── run.sh                            # Top-level test runner
-
-tb-automation/core/                   ← separate repo — Flask app (baked into Docker image)
-├── app.py                            # Flask app — registers blueprints
-├── routes/
-│   └── pivot_excel_v1.py             # Blueprint for POST /api/pivot-excel/v1
-├── config.py                         # Tenant config loader
-├── Dockerfile
-└── requirements.txt
+tb_pivot_excel/                           ← this repo (lives in tb-automation/projects/)
+│
+├── main.py                               ← legacy entry point (mirrors v1/main.py, kept for
+│                                            backward compatibility with old route in app.py)
+├── settings.py                           ← legacy defaults (mirrors v1/settings.py)
+├── __init__.py                           ← makes the folder a Python package
+├── run.sh                                ← legacy local test runner (calls top-level main.py)
+│
+├── test_widget_payload.json              ← symlink → test_widget_payloads/last_60_days_20260217.json
+│                                            (convenience shortcut for quick local testing)
+├── test_widget_payload.json.fullbody     ← raw HTTP request body captured from a real widget call
+│                                            (useful for debugging the full request format)
+├── test_widget_payloads/
+│   └── last_60_days_20260217.json        ← sample payload: last 60 days, captured 2026-02-17
+│                                            edit tenant_id + entity IDs to test against your instance
+│
+└── v1/                                   ← active version (what the live API uses)
+    ├── main.py                           ← core logic: fetch TB telemetry → pivot → export .xlsx
+    ├── settings.py                       ← DEFAULT_REPORT_CONFIG (all defaults) + resolve_config()
+    ├── __init__.py                       ← makes v1/ a Python package
+    ├── run.sh                            ← local test runner: ./run.sh [payload.json] [tenant_id]
+    ├── test_resample.py                  ← unit test for the Daily/Weekly/Monthly/Yearly resampling logic
+    ├── test_widget_payload.json          ← sample payload for v1 local testing
+    └── widget/                           ← ThingsBoard custom widget files (paste into TB widget editor)
+        ├── widget.html                   ← widget HTML (layout, date range selector, download button)
+        ├── widget.js                     ← widget JavaScript (builds payload, POSTs to /api/pivot-excel/v1)
+        ├── schema.json                   ← widget settings schema (drives the Settings panel in TB)
+        └── INSTRUCTIONS.md              ← step-by-step widget installation guide for ThingsBoard
 ```
