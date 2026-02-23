@@ -111,7 +111,7 @@ tb_pivot_excel/                           ← this repo (lives in tb-automation/
 │                                            backward compatibility with old route in app.py)
 ├── settings.py                           ← legacy defaults (mirrors v1/settings.py)
 ├── __init__.py                           ← makes the folder a Python package
-├── run.sh                                ← legacy local test runner (calls top-level main.py)
+├── run.sh                                ← legacy local test runner — reads tenant_id from payload (calls top-level main.py)
 │
 ├── test_widget_payload.json              ← symlink → test_widget_payloads/last_60_days_20260217.json
 │                                            (convenience shortcut for quick local testing)
@@ -125,7 +125,8 @@ tb_pivot_excel/                           ← this repo (lives in tb-automation/
     ├── main.py                           ← core logic: fetch TB telemetry → pivot → export .xlsx
     ├── settings.py                       ← DEFAULT_REPORT_CONFIG (all defaults) + resolve_config()
     ├── __init__.py                       ← makes v1/ a Python package
-    ├── run.sh                            ← local test runner: ./run.sh [payload.json] <tenant_id>  (tenant_id required)
+    ├── run.sh                            ← local test runner: ./run.sh [payload.json] [tenant_id]
+    │                                        tenant_id read from payload if not passed as arg
     ├── test_resample.py                  ← unit test for the Daily/Weekly/Monthly/Yearly resampling logic
     ├── test_widget_payload.json          ← sample payload for v1 local testing
     └── widget/                           ← ThingsBoard custom widget files (paste into TB widget editor)
@@ -233,12 +234,19 @@ docker-compose restart tb-automation
 Use `run.sh` to verify the backend works before wiring up the widget:
 
 ```bash
-# From tb-automation root
 cd projects/tb_pivot_excel/v1
-./run.sh test_widget_payload.json <tenant_id>
+
+# Uses test_widget_payload.json and reads tenant_id from it
+./run.sh
+
+# Use a different payload
+./run.sh path/to/payload.json
+
+# Override tenant_id (run same payload against a different instance)
+./run.sh path/to/payload.json <tenant_id>
 ```
 
-`tenant_id` is required — the script exits with a usage error if omitted. Edit `test_widget_payload.json` to use real entity IDs from your new instance. A successful run prints `output: outputs/<tenant>/<filename>.xlsx`.
+Edit `test_widget_payload.json` to use real entity IDs from your new instance and set `tenant_id` to the correct UUID. A successful run prints `output: outputs/<tenant>/<filename>.xlsx`.
 
 ---
 
