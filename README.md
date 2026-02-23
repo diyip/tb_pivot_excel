@@ -100,6 +100,35 @@ tb-automation/
 
 **Key rule:** `projects/` and `config/` are Docker volumes — you can update them without rebuilding the image. But `core/routes/` and `core/app.py` are baked in — any change there requires `docker-compose up --build`.
 
+---
+
+### HAProxy — how traffic reaches Flask
+
+HAProxy sits in front of everything and decides whether a request goes to ThingsBoard or to Flask, based on the URL path.
+
+```
+Internet
+    │
+    ▼
+HAProxy :443
+    ├── /api/pivot-excel*  →  Flask  (api-backend → 127.0.0.1:5000)
+    ├── /api/reports*      →  Flask
+    ├── /api/projects*     →  Flask
+    ├── /api/health        →  Flask
+    └── everything else    →  ThingsBoard (tb-backend → 127.0.0.1:8080)
+```
+
+The relevant ACL rule in `/etc/haproxy/haproxy.cfg`:
+
+```
+acl is_flask_pivot path_beg /api/pivot-excel
+use_backend api-backend if ... is_flask_pivot
+```
+
+`path_beg` matches any path that **starts with** `/api/pivot-excel` — so `/api/pivot-excel/v1`, `/api/pivot-excel/v2`, and any future version are all routed to Flask automatically.
+
+**No HAProxy changes are needed when adding a new version.** The only files that change are inside `core/` (Flask blueprint + app.py) and `projects/` (new logic).
+
 ### Tenant configuration
 
 Tenants are configured in two files under `config/`:
@@ -353,6 +382,7 @@ Follow the same widget installation steps as Part 2 above, using the files from 
 | `core/app.py` — blueprint registration | **Yes** |
 | `config/secrets.json` or `settings.json` — tenant config | No — it's a volume, just restart |
 | Widget in ThingsBoard | No — done in TB UI |
+| HAProxy config | **No** — `path_beg /api/pivot-excel` already covers all versions |
 
 ---
 
