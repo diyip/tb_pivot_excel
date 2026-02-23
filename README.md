@@ -492,6 +492,46 @@ Both files live in `tb-automation/config/` and are mounted into the Docker conta
 
 ---
 
+### Why two files?
+
+The split follows a simple security principle:
+
+| File | Contains | Who can see it |
+|---|---|---|
+| `secrets.json` | ThingsBoard credentials, passwords, API keys | Server admin only |
+| `settings.json` | URLs, feature flags, display names | Can be shared with the team |
+
+This way you can share `settings.json` for review or version control without exposing credentials.
+
+---
+
+### How they merge
+
+When a request comes in with a `tenant_id`, `Config.get_tenant_config()` builds the final tenant config by:
+
+1. Starting with the full entry from **`secrets.json`** for that `tenant_id`
+2. Overlaying the entry from **`settings.json`** on top, key by key
+3. For the nested `thingsboard` block specifically — it does a **shallow merge**, so you can override just `url` in `settings.json` without losing the credentials from `secrets.json`
+
+```
+secrets.json entry          settings.json entry         merged result
+──────────────────────      ──────────────────────      ──────────────────────
+{                           {                           {
+  "display_name": "Prod",     "name": "Production",       "display_name": "Prod",
+  "thingsboard": {            "enabled": true,             "name": "Production",
+    "url":  "https://...",    "thingsboard": {             "enabled": true,
+    "username": "u@x.com",      "url": "https://..."       "thingsboard": {
+    "password": "••••"        }                              "url":  "https://...",
+  }                         }                              "username": "u@x.com",
+}                                                          "password": "••••"
+                                                         }
+                                                       }
+```
+
+**Practical rule:** put credentials in `secrets.json`, put everything else in `settings.json`. You only need a `secrets.json` entry for a tenant to use the API — a `settings.json`-only entry is valid but has no credentials to log in with.
+
+---
+
 ### secrets.json
 
 Holds ThingsBoard credentials and any other sensitive values. This is the primary source for tenant lookup.
