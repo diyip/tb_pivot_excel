@@ -21,15 +21,106 @@ TB Widget (widget.js)
   • POSTs JSON payload to /api/pivot-excel/v1
         │
         ▼
-Backend (v1/main.py) — running on tb-automation server
+Flask (core/app.py)  ←  running in Docker on tb-automation server
+  • Blueprint: core/routes/pivot_excel_v1.py handles POST /api/pivot-excel/v1
+  • Calls projects/tb_pivot_excel/v1/main.py → generate_pivot_excel_file()
+        │
+        ▼
+Backend (v1/main.py)
   • Fetches timeseries from ThingsBoard REST API
   • Builds Raw Data and Pivot DataFrames
   • Resamples to Daily / Weekly / Monthly / Yearly
   • Writes formatted .xlsx (multi-sheet)
-  • Returns file as download
+  • Returns file path → Flask sends file as download
         │
         ▼
 Browser downloads the .xlsx file
+```
+
+---
+
+## Flask routing architecture
+
+Understanding this is essential before deploying or adding a new version.
+
+### How the route is wired up
+
+Each API version has **two files** in the tb-automation repo:
+
+| File | Role |
+|---|---|
+| `core/routes/pivot_excel_v1.py` | Flask Blueprint — defines the URL route |
+| `projects/tb_pivot_excel/v1/main.py` | Business logic — fetch, pivot, export |
+
+**`core/routes/pivot_excel_v1.py`** registers the route and imports the logic:
+
+```python
+from flask import Blueprint, request, send_file
+
+bp = Blueprint("pivot_excel_v1", __name__)
+
+@bp.route("/api/pivot-excel/v1", methods=["POST", "OPTIONS"])
+def pivot_excel_v1():
+    if request.method == "OPTIONS":
+        return "", 204
+    payload   = request.get_json(silent=True) or {}
+    tenant_id = payload.get("tenant_id", "lh_production_environment")
+    from projects.tb_pivot_excel.v1.main import generate_pivot_excel_file
+    out_path = generate_pivot_excel_file(payload, tenant_id)
+    return send_file(out_path, as_attachment=True, ...)
+```
+
+**`core/app.py`** registers the blueprint at startup:
+
+```python
+from routes.pivot_excel_v1 import bp as pivot_excel_v1
+app.register_blueprint(pivot_excel_v1)
+```
+
+### What lives where (and why it matters)
+
+```
+tb-automation/
+├── core/                  ← baked into Docker image (requires rebuild to change)
+│   ├── app.py             ← Flask app + blueprint registration
+│   ├── routes/
+│   │   └── pivot_excel_v1.py   ← URL route definition
+│   └── Dockerfile
+│
+├── config/                ← mounted as volume (edit without rebuild)
+│   ├── secrets.json       ← ThingsBoard credentials per tenant
+│   └── settings.json      ← Non-sensitive settings per tenant
+│
+├── projects/              ← mounted as volume (edit without rebuild)
+│   └── tb_pivot_excel/    ← this repo
+│       └── v1/main.py     ← business logic
+│
+└── outputs/               ← mounted as volume — generated .xlsx files land here
+```
+
+**Key rule:** `projects/` and `config/` are Docker volumes — you can update them without rebuilding the image. But `core/routes/` and `core/app.py` are baked in — any change there requires `docker-compose up --build`.
+
+### Tenant configuration
+
+Tenants are configured in two files under `config/`:
+
+- **`secrets.json`** — ThingsBoard URL and login credentials (keep this file secret)
+- **`settings.json`** — Non-sensitive settings like `display_name`, enabled projects, rate limits
+
+The `tenant_id` in the widget payload is the key used to look up both files. Example `settings.json` structure:
+
+```json
+{
+  "tenants": {
+    "your_tenant_id": {
+      "name": "My ThingsBoard Instance",
+      "enabled": true,
+      "thingsboard": {
+        "url": "https://your-tb.example.com"
+      }
+    }
+  }
+}
 ```
 
 ---
@@ -51,57 +142,86 @@ Browser downloads the .xlsx file
 
 ### Part 1 — Backend
 
-The backend runs on the **tb-automation server** (not inside ThingsBoard). It must be reachable from ThingsBoard via HTTP.
-
 #### Step 1 — Add the project to tb-automation
 
-Clone or copy this repo into the `projects/` directory of the tb-automation installation:
+Clone this repo into the `projects/` directory on the tb-automation server:
 
+```bash
+cd /path/to/tb-automation/projects
+git clone https://github.com/diyip/tb_pivot_excel.git
 ```
-tb-automation/
-├── core/
-├── projects/
-│   └── tb_pivot_excel/   ← this repo goes here
-├── outputs/
-└── .venv/
-```
+
+No Docker rebuild needed — `projects/` is a mounted volume.
 
 #### Step 2 — Configure the tenant
 
-Add the new ThingsBoard instance to the tb-automation tenant config. The `tenant_id` you use here is the identifier passed in the widget payload (see Part 2, Step 5).
+**`config/secrets.json`** — add the new ThingsBoard instance credentials:
 
-Each tenant entry needs at minimum:
-- ThingsBoard URL (e.g. `https://your-tb-instance.example.com`)
-- ThingsBoard credentials for API access (username / password or token)
-- `display_name` — used to name the output subfolder under `outputs/`
-
-Refer to your tb-automation `config.py` / `tenants.json` for the exact format.
-
-#### Step 3 — Register the API endpoint
-
-Register the route `/api/pivot-excel/v1` in your tb-automation web server to call:
-
-```python
-from projects.tb_pivot_excel.v1.main import generate_pivot_excel_file
-
-# In your route handler:
-result_path = generate_pivot_excel_file(payload, tenant_id)
-# Then return result_path as a file download response
+```json
+{
+  "tenants": {
+    "your_tenant_id": {
+      "display_name": "My ThingsBoard",
+      "thingsboard": {
+        "url":      "https://your-tb.example.com",
+        "username": "admin@example.com",
+        "password": "your-password"
+      }
+    }
+  }
+}
 ```
 
-The endpoint expects a **POST** request with a JSON body (see Payload reference below).
+**`config/settings.json`** — add non-sensitive settings for the same `tenant_id`:
+
+```json
+{
+  "tenants": {
+    "your_tenant_id": {
+      "name":    "My ThingsBoard Instance",
+      "enabled": true,
+      "thingsboard": {
+        "url": "https://your-tb.example.com"
+      }
+    }
+  }
+}
+```
+
+The `tenant_id` key must match exactly what the widget sends in its payload.
+
+#### Step 3 — Register the route in Flask (if not already present)
+
+Check `core/app.py` to confirm the v1 blueprint is registered:
+
+```python
+from routes.pivot_excel_v1 import bp as pivot_excel_v1
+app.register_blueprint(pivot_excel_v1)
+```
+
+And confirm `core/routes/pivot_excel_v1.py` exists. If either is missing, add it and rebuild:
+
+```bash
+docker-compose up --build -d
+```
+
+If the blueprint is already registered (it is, on existing deployments), just restart the container to pick up the new tenant config:
+
+```bash
+docker-compose restart tb-automation
+```
 
 #### Step 4 — Test the backend locally
 
-Use the provided `run.sh` to verify the backend works before wiring up the widget:
+Use `run.sh` to verify the backend works before wiring up the widget:
 
 ```bash
-# From inside tb-automation root (so .venv and core/ are available)
+# From tb-automation root
 cd projects/tb_pivot_excel/v1
-./run.sh test_widget_payload.json <tenant_id>
+./run.sh test_widget_payload.json <your_tenant_id>
 ```
 
-A successful run prints `output: outputs/<tenant>/<filename>.xlsx`.
+Edit `test_widget_payload.json` to use a real entity ID and `tenant_id` from your new instance. A successful run prints `output: outputs/<tenant>/<filename>.xlsx`.
 
 ---
 
@@ -141,11 +261,98 @@ Click **Save** in the widget editor.
 3. In the **Data** tab, add the assets/devices and telemetry keys you want to export.
 4. In the **Settings** tab, configure the widget (see Widget settings below).
 
-Key setting to update for each ThingsBoard instance: set `tenant_id` in the **Advanced** settings or via `reportConfig` if exposed — or confirm the backend is routing correctly based on the origin URL.
-
 #### Step 6 — Verify
 
 Click the **Download Excel** button on the dashboard. The browser should download a `.xlsx` file.
+
+---
+
+## Adding a v2 in the future
+
+When you need to release a new version with breaking changes (new payload format, new sheet structure, etc.) while keeping v1 live for existing dashboards.
+
+### Step 1 — Create the new project code
+
+```
+projects/tb_pivot_excel/
+└── v2/
+    ├── __init__.py
+    ├── main.py        ← new logic, must expose generate_pivot_excel_file(payload, tenant_id)
+    ├── settings.py    ← new defaults
+    ├── run.sh         ← local test runner
+    └── widget/
+        ├── widget.html
+        ├── widget.js  ← must POST to /api/pivot-excel/v2
+        └── schema.json
+```
+
+`projects/` is a volume — no Docker rebuild needed for this step.
+
+### Step 2 — Create the new route file
+
+Create **`core/routes/pivot_excel_v2.py`** in the tb-automation repo:
+
+```python
+from flask import Blueprint, request, send_file
+
+bp = Blueprint("pivot_excel_v2", __name__)
+
+@bp.route("/api/pivot-excel/v2", methods=["POST", "OPTIONS"])
+def pivot_excel_v2():
+    if request.method == "OPTIONS":
+        return "", 204
+    payload   = request.get_json(silent=True) or {}
+    tenant_id = payload.get("tenant_id", "lh_production_environment")
+    from projects.tb_pivot_excel.v2.main import generate_pivot_excel_file
+    out_path = generate_pivot_excel_file(payload, tenant_id)
+    return send_file(
+        out_path,
+        as_attachment=True,
+        download_name=out_path.split("/")[-1],
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+```
+
+### Step 3 — Register the blueprint in app.py
+
+In **`core/app.py`**, add the two lines alongside the existing v1 registration:
+
+```python
+from routes.pivot_excel_v1 import bp as pivot_excel_v1
+from routes.pivot_excel_v2 import bp as pivot_excel_v2   # ← add this
+
+app.register_blueprint(pivot_excel_v1)
+app.register_blueprint(pivot_excel_v2)                    # ← add this
+```
+
+### Step 4 — Rebuild the Docker image
+
+`core/routes/` and `core/app.py` are baked into the image, so a rebuild is required:
+
+```bash
+docker-compose up --build -d
+```
+
+Verify both routes are live:
+
+```bash
+curl -X POST http://localhost:5000/api/pivot-excel/v1 -H "Content-Type: application/json" -d '{}'
+curl -X POST http://localhost:5000/api/pivot-excel/v2 -H "Content-Type: application/json" -d '{}'
+```
+
+### Step 5 — Install v2 widget in ThingsBoard
+
+Follow the same widget installation steps as Part 2 above, using the files from `v2/widget/`. Keep the v1 widget in place — existing dashboards continue to use `/api/pivot-excel/v1` unchanged.
+
+### Summary of what changes for each version
+
+| What | Needs Docker rebuild? |
+|---|---|
+| `projects/tb_pivot_excel/v2/` — new logic | No — it's a volume |
+| `core/routes/pivot_excel_v2.py` — new route file | **Yes** |
+| `core/app.py` — blueprint registration | **Yes** |
+| `config/secrets.json` or `settings.json` — tenant config | No — it's a volume, just restart |
+| Widget in ThingsBoard | No — done in TB UI |
 
 ---
 
@@ -294,19 +501,27 @@ Backend limits (hard caps regardless of payload):
 ## Project structure
 
 ```
-tb_pivot_excel/
+tb_pivot_excel/                       ← this repo (lives in tb-automation/projects/)
 ├── v1/
-│   ├── main.py                   # Core logic — fetch, pivot, export
-│   ├── settings.py               # Default config and backend limits
-│   ├── run.sh                    # Local test runner
-│   ├── test_widget_payload.json  # Sample payload for local testing
+│   ├── main.py                       # Core logic — fetch, pivot, export
+│   ├── settings.py                   # Default config and backend limits
+│   ├── run.sh                        # Local test runner
+│   ├── test_widget_payload.json      # Sample payload for local testing
 │   └── widget/
-│       ├── widget.html           # ThingsBoard widget HTML
-│       ├── widget.js             # ThingsBoard widget JavaScript
-│       ├── schema.json           # ThingsBoard widget settings schema
-│       └── INSTRUCTIONS.md      # Widget installation notes
-├── test_widget_payloads/         # Additional sample payloads
-├── settings.py                   # Top-level settings (mirrors v1)
-├── main.py                       # Top-level entry point
-└── run.sh                        # Top-level test runner
+│       ├── widget.html               # ThingsBoard widget HTML
+│       ├── widget.js                 # ThingsBoard widget JavaScript  (POSTs to /api/pivot-excel/v1)
+│       ├── schema.json               # ThingsBoard widget settings schema
+│       └── INSTRUCTIONS.md          # Widget installation notes
+├── test_widget_payloads/             # Additional sample payloads
+├── settings.py                       # Top-level settings (mirrors v1)
+├── main.py                           # Top-level entry point
+└── run.sh                            # Top-level test runner
+
+tb-automation/core/                   ← separate repo — Flask app (baked into Docker image)
+├── app.py                            # Flask app — registers blueprints
+├── routes/
+│   └── pivot_excel_v1.py             # Blueprint for POST /api/pivot-excel/v1
+├── config.py                         # Tenant config loader
+├── Dockerfile
+└── requirements.txt
 ```
