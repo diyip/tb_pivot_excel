@@ -1,0 +1,137 @@
+{
+  "schema": {
+    "type": "object",
+    "title": "Settings",
+    "properties": {
+      "defaultReportRange": {
+        "title": "Default Report Range",
+        "type": "string",
+        "default": "last_60_days",
+        "enum": [
+          "last_24_hours", "last_7_days", "last_30_days", "last_60_days",
+          "custom_days", "last_month", "last_3_months", "custom_months",
+          "this_year", "last_year"
+        ]
+      },
+      "customDays": {
+        "title": "Custom Days (used when 'Last XX days' is selected)",
+        "type": "number",
+        "default": 14
+      },
+      "customMonths": {
+        "title": "Custom Months (used when 'Last XX months' is selected)",
+        "type": "number",
+        "default": 6
+      },
+      "defaultPageSize": {
+        "title": "Default Page Size",
+        "type": "number",
+        "default": 30
+      },
+      "showTable": {
+        "title": "Show Timeseries Table",
+        "type": "boolean",
+        "default": true
+      },
+      "showDebug": {
+        "title": "Show Debug Panel",
+        "type": "boolean",
+        "default": false
+      },
+      "filename": {
+        "title": "Output Filename (without .xlsx)",
+        "type": "string",
+        "default": "tb_pivot_export"
+      },
+      "filenameRange": {
+        "title": "Append Report Range to Filename",
+        "type": "boolean",
+        "default": true
+      },
+      "filenameTimestamp": {
+        "title": "Append Timestamp to Filename",
+        "type": "boolean",
+        "default": true
+      },
+      "aggDefault": {
+        "title": "Default Aggregation Function",
+        "type": "string",
+        "default": "mean",
+        "enum": ["mean", "sum", "min", "max", "first", "last"]
+      },
+      "weekStart": {
+        "title": "Week Start Day",
+        "type": "string",
+        "default": "Sunday",
+        "enum": ["Sunday", "Monday"]
+      },
+      "partialPeriod": {
+        "title": "Include Incomplete Periods (Daily/Weekly/Monthly/Yearly sheets)",
+        "type": "boolean",
+        "default": false
+      },
+      "reportConfig": {
+        "title": "Report Configuration Override (reportConfig JSON)",
+        "description": "Advanced: overrides all settings above. Leave empty to use widget settings. Example: {\"column_map\": {\"EntityName keyName\": [\"Row1\", \"Row2\"]}, \"agg_map\": {\"pmIn1HrAvg\": \"max\"}, \"formatting\": {\"number_format\": \"#,##0.00\"}}",
+        "type": "string",
+        "default": ""
+      }
+    }
+  },
+  "form": [
+    {
+      "key": "defaultReportRange",
+      "type": "rc-select",
+      "multiple": false,
+      "items": [
+        { "value": "last_24_hours",  "label": "Last 24 hours"  },
+        { "value": "last_7_days",    "label": "Last 7 days"    },
+        { "value": "last_30_days",   "label": "Last 30 days"   },
+        { "value": "last_60_days",   "label": "Last 60 days"   },
+        { "value": "custom_days",    "label": "Last XX days"   },
+        { "value": "last_month",     "label": "Last month"     },
+        { "value": "last_3_months",  "label": "Last 3 months"  },
+        { "value": "custom_months",  "label": "Last XX months" },
+        { "value": "this_year",      "label": "This year"      },
+        { "value": "last_year",      "label": "Last year"      }
+      ]
+    },
+    "customDays",
+    "customMonths",
+    "filename",
+    "filenameRange",
+    "filenameTimestamp",
+    {
+      "key": "aggDefault",
+      "type": "rc-select",
+      "multiple": false,
+      "items": [
+        { "value": "mean",  "label": "Mean (average)" },
+        { "value": "sum",   "label": "Sum"            },
+        { "value": "min",   "label": "Min"            },
+        { "value": "max",   "label": "Max"            },
+        { "value": "first", "label": "First"          },
+        { "value": "last",  "label": "Last"           }
+      ]
+    },
+    {
+      "key": "weekStart",
+      "type": "rc-select",
+      "multiple": false,
+      "items": [
+        { "value": "Sunday", "label": "Sunday" },
+        { "value": "Monday", "label": "Monday" }
+      ]
+    },
+    "partialPeriod",
+    "defaultPageSize",
+    "showTable",
+    "showDebug",
+    {
+      "key": "reportConfig",
+      "type": "textarea",
+      "placeholder": "Leave empty — use widget settings above",
+      "rows": 10
+    }
+  ]
+}

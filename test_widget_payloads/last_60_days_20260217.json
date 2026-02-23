@@ -1,0 +1,45 @@
+{
+  "tenant_id": "lh_production_environment",
+  "timezone": "Asia/Bangkok",
+  "timeEpoch": {
+    "startTs_ms": 1771293020855,
+    "endTs_ms": 1771379420855
+  },
+  "entities": [
+    {
+      "type": "ASSET",
+      "id": "e9ff1f13-c97d-11ee-85cf-013a33088729",
+      "name": "7X_B-7X02-A"
+    },
+    {
+      "type": "ASSET",
+      "id": "e9ff1f12-c97d-11ee-85cf-013a33088729",
+      "name": "8A_B-8A02-X"
+    },
+    {
+      "type": "ASSET",
+      "id": "e9ff1f11-c97d-11ee-85cf-013a33088729",
+      "name": "8A_O-8A01-X"
+    },
+    {
+      "type": "ASSET",
+      "id": "e9ff1f10-c97d-11ee-85cf-013a33088729",
+      "name": "7X_O-7X01-A"
+    }
+  ],
+  "keys": [
+    "pmIn1HrAvg",
+    "pmOut1HrAvg"
+  ],
+  "query": {
+    "agg": "NONE",
+    "limit": 50000,
+    "order": "ASC"
+  },
+  "reportConfig": {
+    "column_map": {
+      "7X_B-7X02-A pmIn1HrAvg": ["CUSTOM-B2"],
+      "8A_O-8A01-X pmOut1HrAvg": ["CUSTOM-O-OUT"]
+    }
+  }
+}

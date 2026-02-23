@@ -1,0 +1,21 @@
+__pycache__/
+*.pyc
+*.pyo
+.claude/
+*.fullbody
+
+# Secrets and credentials
+secrets*
+secret*
+*.secret
+.env
+.env.*
+*credentials*
+*credential*
+*token*
+*api_key*
+*password*
+*.pem
+*.key
+*.p12
+*.pfx

@@ -1,0 +1,41 @@
+{
+  "tenant_id": "0a85b420-8d87-11ee-a473-27ffec2887b9",
+  "timezone": "Asia/Bangkok",
+  "timeEpoch": {
+    "startTs_ms": 1766638800000,
+    "endTs_ms": 1771825278836
+  },
+  "entities": [
+    {
+      "type": "DEVICE",
+      "id": "0a425370-847e-11f0-8840-016c77345d24",
+      "name": "meter1"
+    },
+    {
+      "type": "DEVICE",
+      "id": "d8818800-6c4b-11f0-a91b-238b9df8a4d4",
+      "name": "anurak-fl3-cdu3-pw2"
+    }
+  ],
+  "keys": [
+    "Energy: Reverse Active Energy (kWh)",
+    "Energy: Forward Active Energy (kWh)"
+  ],
+  "query": {
+    "agg": "AVG",
+    "interval": 3600000,
+    "limit": 50000,
+    "order": "ASC"
+  },
+  "reportConfig": {
+    "filename": "carpark_energy",
+    "filename_timestamp": true,
+    "agg_map": {
+      "default": "last"
+    },
+    "sheets": {
+      "week_start": "Sunday",
+      "partial_period": false
+    }
+  }
+}
