@@ -41,26 +41,52 @@ Configure these in the widget's **Settings** panel when placing it on a dashboar
 | `customMonths` | number | `6` | Months used when "Last XX months" is selected |
 | `defaultPageSize` | number | `30` | Rows per page in the timeseries table |
 | `showTable` | boolean | `true` | Show/hide the embedded timeseries table panel |
-| `showDebug` | boolean | `false` | Show/hide the debug info panel |
+| `showDebug` | boolean | `false` | Show/hide the debug info panel; also appends a `_Config` sheet to the Excel output with the fully-resolved report config |
 | `filename` | string | `tb_pivot_export` | Base name for the downloaded .xlsx file |
-| `filenameRange` | boolean | `true` | Append the selected range label to the filename |
-| `filenameTimestamp` | boolean | `true` | Append a datetime stamp to the filename |
+| `filenameRange` | boolean | `true` | Append the selected range label to the browser download filename (widget-side only; does not affect the server-side file) |
+| `filenameTimestamp` | boolean | `true` | Append a datetime stamp to the browser download filename (widget-side only; does not affect the server-side file) |
 | `aggDefault` | select | `mean` | Default aggregation for Daily/Weekly/Monthly/Yearly sheets |
 | `weekStart` | select | `Sunday` | First day of week for the Weekly sheet |
-| `partialPeriod` | boolean | `false` | Include incomplete periods in aggregated sheets |
+| `partialPeriod` | boolean | `false` | Include incomplete periods in aggregated sheets. When `false`, a period is dropped if it extends beyond the data range **or** if the first data point is not exactly at midnight (partial first day). When `true`, all periods with any data are included. |
 | `reportConfig` | textarea | *(empty)* | Advanced JSON override — see section below |
+
+> **Timezone note:** The widget currently hardcodes `timezone: "Asia/Bangkok"` in the payload sent to the backend. There is no widget setting for this — to change the timezone, edit `widget.js` and replace the three `'Asia/Bangkok'` occurrences.
+
+---
+
+## Auto-aggregation
+
+Before sending the request the widget estimates the total number of data points (`series × span_hours × density_per_hour`) and picks the TB API query tier automatically:
+
+| Estimated points | Query sent |
+|---|---|
+| ≤ 40 000 | `agg: "NONE"` (raw data) |
+| hourly estimate ≤ 40 000 | `agg: "AVG"`, 1-hour interval |
+| otherwise | `agg: "AVG"`, 1-day interval |
+
+When no prior data is available the widget assumes a density of **60 points/series/hour**. Both constants (`safeLimit = 40 000`, `fallbackDensity = 60`) are hardcoded in `widget.js`. To bypass auto-agg entirely, set `query` in `reportConfig` (see below).
+
+The widget also includes a `_autoAgg` field in every payload containing the full decision details (series count, density, point estimates, selected tier). The backend ignores this field — it exists for diagnostics and is shown in the widget's **Show Debug Panel** output.
+
+> **Pivot vs Raw Data timestamps:** For aggregated queries (`agg=AVG`), ThingsBoard returns each row timestamped at the **midpoint** of its interval. The Raw Data sheet keeps this midpoint. The Pivot sheet snaps timestamps to the **interval start**, so pivot rows align to clean boundaries. For hourly data, Pivot timestamps can be up to 30 minutes earlier than the matching Raw Data row. Raw queries (`agg=NONE`) are unaffected — both sheets use the same timestamp.
 
 ---
 
 ## Advanced: reportConfig override
 
 Leave the `reportConfig` field empty to use the settings above.
-To override, paste a JSON object. Any key you include replaces the corresponding default.
+To override, paste a JSON object. Sections merge differently:
+
+| Section | Behaviour |
+|---|---|
+| `formatting`, `agg_map`, `sheets` | **Shallow merge** — only the keys you provide override defaults; omitted keys keep their defaults |
+| `column_map` | **Full replace** — the entire default is replaced; key order controls column order in Excel |
+| `filename`, `filename_timestamp` | Simple replace |
 
 ```json
 {
   "column_map": {
-    "EntityName keyName": ["Header row 1", "Header row 2"]
+    "EntityName telemetryKey": ["Header row 1", "Header row 2"]
   },
   "agg_map": {
     "pmIn1HrAvg": "max",
@@ -75,6 +101,8 @@ To override, paste a JSON object. Any key you include replaces the corresponding
   }
 }
 ```
+
+`column_map` key format: `"<entity_name> <telemetry_key>"` — the ThingsBoard device/asset name (exactly as it appears on the dashboard), a single space, then the telemetry key name. If the entity name contains spaces, the key still uses the full name (e.g. `"Unit A temperature"`). Enable **Show Debug Panel** to get a `_Config` sheet in the Excel output listing all exact column names.
 
 You can also override the query (bypasses auto-agg):
 

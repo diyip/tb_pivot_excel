@@ -463,7 +463,8 @@ self.onInit = function () {
 			entities     : data.entities,
 			keys         : data.keys,
 			query        : agg.query,
-			reportConfig : cfg.reportConfig
+			reportConfig : cfg.reportConfig,
+			debug        : cfg.showDebug
 		};
 
 		setExportState(true);

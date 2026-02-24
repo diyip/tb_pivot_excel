@@ -59,10 +59,16 @@ def _merge_report_config(payload_report_config: dict) -> dict:
 
 
 def _parse_payload(payload: dict):
-    tz       = payload.get("timezone") or S.DEFAULT_TIMEZONE
-    te       = payload.get("timeEpoch") or {}
-    start_ts = int(te.get("startTs_ms"))
-    end_ts   = int(te.get("endTs_ms"))
+    tz           = payload.get("timezone") or S.DEFAULT_TIMEZONE
+    te           = payload.get("timeEpoch") or {}
+    start_ts_raw = te.get("startTs_ms")
+    end_ts_raw   = te.get("endTs_ms")
+    if start_ts_raw is None or end_ts_raw is None:
+        raise ValueError("Missing timeEpoch.startTs_ms or timeEpoch.endTs_ms")
+    start_ts = int(start_ts_raw)
+    end_ts   = int(end_ts_raw)
+    if start_ts >= end_ts:
+        raise ValueError(f"startTs_ms ({start_ts}) must be less than endTs_ms ({end_ts})")
     entities = payload.get("entities") or []
     keys     = payload.get("keys") or []
     q        = payload.get("query") or {}
@@ -90,6 +96,9 @@ def _parse_payload(payload: dict):
 
     rc = _merge_report_config(payload.get("reportConfig"))
 
+    # Ensure all required formatting keys are present even if user passed formatting: {}
+    fmt = {**S.DEFAULT_REPORT_CONFIG["formatting"], **rc["formatting"]}
+
     result = {
         "timezone":           tz,
         "startTs":            start_ts,
@@ -102,7 +111,7 @@ def _parse_payload(payload: dict):
         "order":              order,
         "filename":           rc["filename"],
         "filename_timestamp": rc["filename_timestamp"],
-        "fmt":                rc["formatting"],
+        "fmt":                fmt,
         "column_map":         rc["column_map"],
         "agg_map":            rc["agg_map"],
         "sheets_cfg":         rc["sheets"],
@@ -148,14 +157,15 @@ def _fetch_timeseries(tb_url, tenant_id, entity_type, entity_id,
     if interval and agg != "NONE":
         n_intervals = (end_ts - start_ts) / interval
         if n_intervals > _MAX_INTERVALS_PER_REQUEST:
-            chunk_ms = int(_MAX_INTERVALS_PER_REQUEST * interval)
+            chunk_ms    = int(_MAX_INTERVALS_PER_REQUEST * interval)
+            chunk_limit = _MAX_INTERVALS_PER_REQUEST  # each chunk returns at most this many points
             merged: dict = {}
             t = start_ts
             while t < end_ts:
                 chunk_end = min(t + chunk_ms, end_ts)
                 chunk = _fetch_timeseries_single(
                     tb_url, tenant_id, entity_type, entity_id,
-                    keys, t, chunk_end, limit, agg, interval_param,
+                    keys, t, chunk_end, chunk_limit, agg, interval_param,
                 )
                 for key, points in chunk.items():
                     merged.setdefault(key, []).extend(points)
@@ -210,8 +220,9 @@ def _resample_pivot(df_pivot: pd.DataFrame, freq: str, agg_map: dict,
 
     df_resampled = df.resample(freq_str).agg(agg_dict)
 
-    data_start = df_pivot["Timestamp"].min()
-    data_end   = df_pivot["Timestamp"].max()
+    data_start     = df_pivot["Timestamp"].min()
+    data_end       = df_pivot["Timestamp"].max().normalize() + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
+    partial_period = sheets_cfg.get("partial_period", False)
 
     complete_rows = []
     for period_end, row in df_resampled.iterrows():
@@ -219,8 +230,8 @@ def _resample_pivot(df_pivot: pd.DataFrame, freq: str, agg_map: dict,
             period_start    = period_end.normalize()
             period_end_excl = period_start + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
         elif freq == "W":
-            period_end_excl = period_end
             period_start    = period_end - pd.Timedelta(days=6)
+            period_end_excl = period_end + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
         elif freq == "MS":
             period_start    = period_end
             next_month      = period_start + pd.offsets.MonthEnd(1)
@@ -232,11 +243,14 @@ def _resample_pivot(df_pivot: pd.DataFrame, freq: str, agg_map: dict,
             period_start    = period_end
             period_end_excl = period_end
 
-        first_day_complete = (data_start == data_start.normalize())
-        if period_start >= data_start.normalize() and period_end_excl <= data_end:
-            if period_start.date() == data_start.date() and not first_day_complete:
-                continue
+        if partial_period:
             complete_rows.append((period_start, row))
+        else:
+            first_day_complete = (data_start == data_start.normalize())
+            if period_start >= data_start.normalize() and period_end_excl <= data_end:
+                if period_start.date() == data_start.date() and not first_day_complete:
+                    continue
+                complete_rows.append((period_start, row))
 
     if not complete_rows:
         return pd.DataFrame()
@@ -296,7 +310,8 @@ def _write_headers(ws, cols: list, fmt: dict, column_map: dict, ts_col: str = "T
             cell.border    = border
 
     if max_header_rows > 1:
-        ts_col_letter = get_column_letter(1)
+        ts_col_idx    = cols.index(ts_col) + 1 if ts_col in cols else 1
+        ts_col_letter = get_column_letter(ts_col_idx)
         ws.merge_cells(f"{ts_col_letter}1:{ts_col_letter}{max_header_rows}")
 
         for row_idx in range(1):
@@ -342,13 +357,16 @@ def _format_sheet(ws, cols: list, fmt: dict, column_map: dict,
 
     n_header_rows = _write_headers(ws, cols, fmt, column_map, ts_col)
 
+    ts_fmt  = fmt["datetime_format"] if ts_col == "Timestamp" else fmt["date_format"]
     max_row = ws.max_row
     max_col = ws.max_column
     for row in range(n_header_rows + 1, max_row + 1):
         for col in range(1, max_col + 1):
             cell        = ws.cell(row, col)
             cell.border = border
-            if col > 1 and cell.value is not None:
+            if col == 1 and cell.value is not None:
+                cell.number_format = ts_fmt
+            elif col > 1 and cell.value is not None:
                 try:
                     float(cell.value)
                     cell.number_format = fmt["number_format"]
@@ -412,18 +430,19 @@ def build_dataframes_from_widget_payload(payload: dict, tenant_id: str, tb_url: 
         .tz_localize(None)
     )
 
-    df_pivot         = df_pivot_src.pivot_table(index="Timestamp", columns="Asset Name", values=p["keys"], aggfunc="first")
-    df_pivot.columns = [f"{asset} {key}" for (key, asset) in df_pivot.columns]
-    df_pivot         = df_pivot.sort_index().reset_index()
+    df_pivot = df_pivot_src.pivot_table(index="Timestamp", columns="Asset Name", values=p["keys"], aggfunc="first")
+    if isinstance(df_pivot.columns, pd.MultiIndex):
+        df_pivot.columns = [f"{asset} {key}" for (key, asset) in df_pivot.columns]
+    else:
+        # Single key: pivot_table returns flat index of asset names
+        single_key       = p["keys"][0]
+        df_pivot.columns = [f"{asset} {single_key}" for asset in df_pivot.columns]
+    df_pivot = df_pivot.sort_index().reset_index()
 
     col_order = ["Timestamp"] + [c for c in p["column_map"].keys() if c in df_pivot.columns]
     remaining = [c for c in df_pivot.columns if c not in col_order]
     remaining = sorted(remaining, key=lambda c: (c.split(" ", 1)[0], c.split(" ", 1)[1] if " " in c else ""))
     df_pivot  = df_pivot[col_order + remaining]
-
-    if p["order"] == "DESC":
-        df_raw   = df_raw.sort_values("Timestamp", ascending=False)
-        df_pivot = df_pivot.sort_values("Timestamp", ascending=False)
 
     agg_map    = p["agg_map"]
     sheets_cfg = p["sheets_cfg"]
@@ -434,6 +453,11 @@ def build_dataframes_from_widget_payload(payload: dict, tenant_id: str, tb_url: 
         if not df_agg.empty:
             agg_sheets[key] = df_agg
 
+    if p["order"] == "DESC":
+        df_raw     = df_raw.sort_values("Timestamp", ascending=False)
+        df_pivot   = df_pivot.sort_values("Timestamp", ascending=False)
+        agg_sheets = {k: v.sort_values("Date", ascending=False) for k, v in agg_sheets.items()}
+
     return df_raw, df_pivot, agg_sheets, p
 
 
@@ -443,6 +467,8 @@ def generate_xlsx_from_widget_payload(payload: dict, tenant_id: str) -> str:
     tb_url = get_tb_url(tenant_id)
 
     df_raw, df_pivot, agg_sheets, p = build_dataframes_from_widget_payload(payload, tenant_id, tb_url)
+    if df_raw.empty:
+        raise ValueError("No data returned for the specified time range, entities, and keys.")
 
     base_dir     = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
     tenant_cfg   = cfg.get_tenant_config(tenant_id) or {}
@@ -505,6 +531,8 @@ def generate_xlsx_from_widget_payload(payload: dict, tenant_id: str) -> str:
                 cell.fill      = header_fill
                 cell.font      = header_font
                 cell.alignment = header_aln
+            elif col == 1 and cell.value is not None:
+                cell.number_format = fmt["datetime_format"]
             elif col > 1 and cell.value is not None:
                 try:
                     float(cell.value)
@@ -592,8 +620,8 @@ def _read_json(path: str) -> dict:
 def main():
     here         = os.path.dirname(__file__)
     payload_path = None
-    if len(os.sys.argv) >= 2:
-        payload_path = os.sys.argv[1]
+    if len(sys.argv) >= 2:
+        payload_path = sys.argv[1]
     else:
         for cand in ["test_widget_payload.json", "request_example.json"]:
             p = os.path.join(here, cand)
@@ -603,7 +631,7 @@ def main():
     if not payload_path or not os.path.exists(payload_path):
         raise SystemExit("ERROR: No payload JSON found.")
     payload   = _read_json(payload_path)
-    tenant_id = os.sys.argv[2] if len(os.sys.argv) >= 3 else payload.get("tenant_id")
+    tenant_id = sys.argv[2] if len(sys.argv) >= 3 else payload.get("tenant_id")
     if not tenant_id:
         raise SystemExit("ERROR: tenant_id not found in payload or CLI args.")
     out       = generate_pivot_excel_file(payload, tenant_id)

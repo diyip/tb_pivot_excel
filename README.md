@@ -187,6 +187,8 @@ The `tenant_id` in the widget payload (always a UUID in production) is the key u
 | **Yearly** | Pivot resampled to yearly periods |
 | **Raw Data** | Raw telemetry rows as returned from ThingsBoard |
 
+> **Pivot vs Raw Data timestamps (aggregated queries):** When ThingsBoard returns aggregated data (`agg=AVG` with an interval), it timestamps each row at the **midpoint** of the interval. The Raw Data sheet preserves this midpoint timestamp. The Pivot sheet snaps each timestamp back to the **interval start** (`ts - (ts % interval_ms)`) so that pivot rows align to clean period boundaries. For hourly data this means Pivot timestamps can be up to 30 minutes earlier than the corresponding Raw Data timestamps — this is intentional. For raw queries (`agg=NONE`) both sheets use the same timestamp.
+
 ---
 
 ## Deploying to a new ThingsBoard instance
@@ -395,10 +397,10 @@ Configure these in the widget **Settings** panel when placing it on a dashboard.
 | `customMonths` | `6` | Months used when "Last XX months" is selected |
 | `defaultPageSize` | `30` | Rows per page in the embedded timeseries table |
 | `showTable` | `true` | Show / hide the embedded data preview table |
-| `showDebug` | `false` | Show / hide the debug info panel |
+| `showDebug` | `false` | Show / hide the debug info panel; also appends a `_Config` sheet to the Excel output with the fully-resolved report config |
 | `filename` | `tb_pivot_export` | Base name for the downloaded .xlsx (without extension) |
-| `filenameRange` | `true` | Append the selected range label to the filename |
-| `filenameTimestamp` | `true` | Append a datetime stamp to the filename |
+| `filenameRange` | `true` | Append the selected range label to the browser download filename (widget-side only; does not affect the server-side file) |
+| `filenameTimestamp` | `true` | Append a datetime stamp to the browser download filename (widget-side only; does not affect the server-side file) |
 | `aggDefault` | `mean` | Default aggregation for Daily/Weekly/Monthly/Yearly sheets |
 | `weekStart` | `Sunday` | First day of week for the Weekly sheet |
 | `partialPeriod` | `false` | Include incomplete periods in aggregated sheets |
@@ -412,17 +414,17 @@ Available date range options: `last_24_hours`, `last_7_days`, `last_30_days`, `l
 
 ### The three-layer config system
 
-Every report run resolves its final config from three layers, applied in order:
+Every report run resolves its final config from three layers, applied in priority order (lowest → highest):
 
 ```
-Layer 1 — settings.py (DEFAULT_REPORT_CONFIG)
-    ↓  merged with
-Layer 2 — widget UI settings (filename, aggDefault, weekStart, etc.)
-    ↓  merged with
-Layer 3 — payload.reportConfig (manual JSON override in widget settings)
-    ↓
-Final effective config used to build the Excel file
+Layer 1 — settings.py (DEFAULT_REPORT_CONFIG)          ← lowest priority
+Layer 2 — widget UI settings (filename, aggDefault, weekStart, partialPeriod …)
+Layer 3 — reportConfig textarea (manual JSON override)  ← highest priority
 ```
+
+**Important:** layers 2 and 3 are merged **by the widget (client-side)** before the request is sent. The backend only receives a single `reportConfig` object — it never sees layers 2 and 3 separately. The backend then merges that object on top of `DEFAULT_REPORT_CONFIG` (layer 1).
+
+Within the widget-side merge (layers 2 → 3), `agg_map` and `sheets` are shallow-merged so you can override individual keys; all other top-level keys in the textarea override wins outright.
 
 ### settings.py — where defaults live
 
@@ -492,7 +494,7 @@ Leave `reportConfig` empty to use the widget settings above. To override specifi
 
 ### Column labels (column_map)
 
-By default, column headers are auto-split from the column name (`"AssetName key"` → two-row header). Use `column_map` to set custom labels:
+By default, column headers are auto-split from the column name on the **first space** (`"AssetName key"` → `["AssetName", "key"]` two-row header). Use `column_map` to set custom labels:
 
 ```json
 {
@@ -503,7 +505,13 @@ By default, column headers are auto-split from the column name (`"AssetName key"
 }
 ```
 
-Key format: `"<asset_name> <telemetry_key>"`. Value: list of header row labels top-to-bottom.
+**Key format:** `"<entity_name> <telemetry_key>"` — the entity name exactly as it appears in `payload.entities[].name` (the ThingsBoard device/asset name), a single space, then the telemetry key name.
+
+**Value:** list of header row strings, top-to-bottom. One string = single-row header; two strings = two-row merged header.
+
+> **Entity names with spaces:** if the entity name contains spaces (e.g. `"Unit A"`), the auto-split header will be wrong because it splits on the first space only (`"Unit A temperature"` → `["Unit", "A temperature"]`). Use `column_map` to fix the label. The key is the full column name: `"Unit A temperature"`.
+
+> **Tip:** enable **Show Debug Panel** in the widget to add a `_Config` sheet to the Excel output — it lists all resolved column names so you can copy-paste the exact keys.
 
 ### Aggregation per key (agg_map)
 
@@ -530,6 +538,14 @@ Valid values: `mean`, `sum`, `min`, `max`, `first`, `last`.
 }
 ```
 
+**`partial_period` behaviour when `false` (default):**
+
+A period is included only when both conditions are met:
+1. The period falls entirely within the data range (`period_start ≥ data_start` and `period_end ≤ data_end`)
+2. The first data point falls exactly at midnight (`00:00:00`). If data starts mid-day (e.g. 08:30), the period that contains that first partial day is also dropped.
+
+When `true`, all periods that have any data are included regardless of completeness.
+
 ### Excel formatting (formatting)
 
 ```json
@@ -542,6 +558,28 @@ Valid values: `mean`, `sum`, `min`, `max`, `first`, `last`.
   }
 }
 ```
+
+### How auto-aggregation works
+
+Before sending the request the widget estimates the total number of data points:
+
+```
+estimated_points = series_count × span_hours × density_per_hour
+```
+
+- **`series_count`** — number of entity × key combinations on the dashboard
+- **`density_per_hour`** — observed from previous data if available; otherwise uses the hardcoded fallback of **60 points/series/hour**
+- **`safeLimit`** — hardcoded to **40 000**; the threshold below which raw data is acceptable
+
+The widget then picks the query tier automatically:
+
+| Condition | Query sent |
+|---|---|
+| `rawEst ≤ safeLimit` | `agg: "NONE"` (raw data) |
+| `hourlyEst ≤ safeLimit` | `agg: "AVG"`, `interval: 3 600 000 ms` (1 h) |
+| otherwise | `agg: "AVG"`, `interval: 86 400 000 ms` (1 day) |
+
+Both `safeLimit` and `fallbackDensity` are hardcoded constants in `widget.js` — there are no widget settings for them.
 
 ### Override ThingsBoard query
 
@@ -577,13 +615,22 @@ The widget POSTs this JSON structure to `/api/pivot-excel/v1`:
   ],
   "keys": ["telemetryKey1", "telemetryKey2"],
   "query": {
-    "agg":   "NONE",
-    "limit": 50000,
-    "order": "ASC"
+    "agg":      "NONE",
+    "interval": null,
+    "limit":    50000,
+    "order":    "ASC"
   },
-  "reportConfig": {}
+  "reportConfig": {},
+  "debug": false,
+  "_autoAgg": {}
 }
 ```
+
+> **Timezone note:** `timezone` is hardcoded to `"Asia/Bangkok"` in `widget.js`. There is no widget setting for it — to change the timezone, edit `widget.js` and replace the three `'Asia/Bangkok'` occurrences.
+
+When `debug` is `true` the backend appends an extra `_Config` sheet to the workbook containing the fully-resolved report config (useful for verifying `reportConfig` overrides). The widget sends `debug: true` automatically when **Show Debug Panel** is enabled in the widget settings.
+
+`_autoAgg` is a widget-side diagnostic field added to every payload. It contains the auto-aggregation decision: series count, density used, point estimates, selected tier (`NONE (raw)` / `1 hour` / `1 day`), and the snapped `startTs`. The backend ignores this field entirely — it is included only so the full decision is visible in the widget's debug panel and in network request logs.
 
 Backend limits (hard caps regardless of payload):
 
@@ -592,6 +639,8 @@ Backend limits (hard caps regardless of payload):
 | Max entities | 500 |
 | Max keys | 100 |
 | Max points per key per entity | 10,000 |
+
+**Chunked fetching:** ThingsBoard limits aggregated requests to ~700 intervals per HTTP call. When the requested time range divided by the interval exceeds 700, the backend automatically splits the fetch into multiple sequential requests and merges the results. This is transparent — the caller receives a single combined dataset. Chunking applies only when `agg` is not `NONE`; raw data requests use the `limit` parameter instead.
 
 ---
 

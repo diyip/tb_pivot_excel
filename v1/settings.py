@@ -103,7 +103,7 @@ def resolve_config(defaults: dict, overrides: dict) -> dict:
     """
     base = copy.deepcopy(defaults)
 
-    if not overrides:
+    if not overrides or not isinstance(overrides, dict):
         return base
 
     rc = overrides
